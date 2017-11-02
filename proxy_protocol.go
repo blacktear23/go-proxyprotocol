@@ -140,9 +140,7 @@ func (l *proxyProtocolListener) acceptLoop() {
 	for l.running() {
 		conn, err := l.listener.Accept()
 		if err != nil {
-			if l.running() {
-				l.acceptQueue <- &connErr{conn, err}
-			}
+			l.acceptQueue <- &connErr{conn, err}
 		} else if !l.checkAllowed(conn.RemoteAddr()) && l.running() {
 			conn.Close()
 			l.acceptQueue <- &connErr{nil, err}
