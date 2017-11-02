@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"errors"
@@ -34,11 +35,25 @@ var (
 	_ net.Listener = &proxyProtocolListener{}
 )
 
+type connErr struct {
+	conn net.Conn
+	err  error
+}
+
 type proxyProtocolListener struct {
 	listener          net.Listener
 	allowAll          bool
 	allowedNets       []*net.IPNet
 	headerReadTimeout int // Unit is second
+	acceptQueue       chan *connErr
+	runningFlag       int32
+}
+
+func IsProxyProtocolError(err error) bool {
+	return err == ErrProxyProtocolV1HeaderInvalid ||
+		err == ErrProxyProtocolV2HeaderInvalid ||
+		err == ErrProxyAddressNotAllowed ||
+		err == ErrHeaderReadTimeout
 }
 
 // Create new PROXY protocol listener
@@ -46,7 +61,11 @@ type proxyProtocolListener struct {
 // * allowedIPs is protocol allowed addresses or CIDRs split by `,` if use '*' means allow any address
 // * headerReadTimeout is timeout for PROXY protocol header read
 func NewListener(listener net.Listener, allowedIPs string, headerReadTimeout int) (net.Listener, error) {
-	return newListener(listener, allowedIPs, headerReadTimeout)
+	ppl, err := newListener(listener, allowedIPs, headerReadTimeout)
+	if err == nil {
+		go ppl.acceptLoop()
+	}
+	return ppl, err
 }
 
 func newListener(listener net.Listener, allowedIPs string, headerReadTimeout int) (*proxyProtocolListener, error) {
@@ -75,6 +94,8 @@ func newListener(listener net.Listener, allowedIPs string, headerReadTimeout int
 		allowAll:          allowAll,
 		allowedNets:       allowedNets,
 		headerReadTimeout: headerReadTimeout,
+		acceptQueue:       make(chan *connErr, 1),
+		runningFlag:       1,
 	}, nil
 }
 
@@ -110,26 +131,55 @@ func (l *proxyProtocolListener) createProxyProtocolConn(conn net.Conn) (*proxyPr
 	return ppconn, nil
 }
 
+func (l *proxyProtocolListener) running() bool {
+	r := atomic.LoadInt32(&l.runningFlag)
+	return r == 1
+}
+
+func (l *proxyProtocolListener) acceptLoop() {
+	for l.running() {
+		conn, err := l.listener.Accept()
+		if err != nil {
+			if l.running() {
+				l.acceptQueue <- &connErr{conn, err}
+			}
+		} else if !l.checkAllowed(conn.RemoteAddr()) && l.running() {
+			conn.Close()
+			l.acceptQueue <- &connErr{nil, err}
+		} else {
+			go l.wrapConn(conn)
+		}
+	}
+}
+
+func (l *proxyProtocolListener) wrapConn(conn net.Conn) {
+	wconn, err := l.createProxyProtocolConn(conn)
+	if l.running() {
+		l.acceptQueue <- &connErr{wconn, err}
+	} else {
+		wconn.Close()
+	}
+}
+
 // Accept new connection
 // You should check error instead of panic it.
 // As PROXY protocol SPEC wrote, if invalid PROXY protocol header
 // received or connection's address not allowed, Accept function
 // will return an error and close this connection.
 func (l *proxyProtocolListener) Accept() (net.Conn, error) {
-	conn, err := l.listener.Accept()
-	if err != nil {
-		return nil, err
+	ce := <-l.acceptQueue
+	if ce == nil {
+		return nil, errors.New(fmt.Sprintf("accept tcp %s: use of closed network connection", l.Addr()))
 	}
-	if !l.checkAllowed(conn.RemoteAddr()) {
-		conn.Close()
-		return nil, ErrProxyAddressNotAllowed
-	}
-	return l.createProxyProtocolConn(conn)
+	return ce.conn, ce.err
 }
 
 // Close listener
 func (l *proxyProtocolListener) Close() error {
-	return l.listener.Close()
+	atomic.SwapInt32(&l.runningFlag, 0)
+	err := l.listener.Close()
+	close(l.acceptQueue)
+	return err
 }
 
 // Get listener's address

@@ -292,3 +292,40 @@ func (ts ProxyProtocolTestSuite) TestProxyProtocolV2HeaderReadLocalCommand(c *C)
 		"Buffer:%v\nExpected: %s Got: %s", buffer, craddr.String(), clientIP.String(),
 	))
 }
+
+func (ts ProxyProtocolTestSuite) TestProxyProtocolListener(c *C) {
+	addr := "127.0.0.1:18080"
+	go func() {
+		l, err := net.Listen("tcp", addr)
+		c.Assert(err, IsNil)
+		ppl, err := NewListener(l, "*", 1)
+		c.Assert(err, IsNil)
+		defer ppl.Close()
+
+		conn, err := ppl.Accept()
+		c.Assert(conn, IsNil)
+		c.Assert(err, Equals, ErrHeaderReadTimeout)
+	}()
+
+	conn, err := net.Dial("tcp", addr)
+	c.Assert(err, IsNil)
+	time.Sleep(2 * time.Second)
+	conn.Close()
+}
+
+func (ts ProxyProtocolTestSuite) TestProxyProtocolListenerCloseInOtherGoroutine(c *C) {
+	addr := "127.0.0.1:18081"
+	l, err := net.Listen("tcp", addr)
+	c.Assert(err, IsNil)
+	ppl, err := NewListener(l, "*", 1)
+	c.Assert(err, IsNil)
+	go func() {
+		conn, err := ppl.Accept()
+		c.Assert(conn, IsNil)
+		c.Assert(err, NotNil)
+	}()
+
+	time.Sleep(1 * time.Second)
+	ppl.Close()
+	time.Sleep(2 * time.Second)
+}
