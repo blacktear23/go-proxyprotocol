@@ -168,8 +168,10 @@ func (l *proxyProtocolListener) wrapConn(conn net.Conn) {
 // will return an error and close this connection.
 func (l *proxyProtocolListener) Accept() (net.Conn, error) {
 	ce := <-l.acceptQueue
-	if ce == nil {
-		return nil, errors.New(fmt.Sprintf("accept tcp %s: use of closed network connection", l.Addr()))
+	if opErr, ok := ce.err.(*net.OpError); ok {
+		if opErr.Err.Error() == "use of closed network connection" {
+			close(l.acceptQueue)
+		}
 	}
 	return ce.conn, ce.err
 }
@@ -178,7 +180,6 @@ func (l *proxyProtocolListener) Accept() (net.Conn, error) {
 func (l *proxyProtocolListener) Close() error {
 	atomic.SwapInt32(&l.runningFlag, 0)
 	err := l.listener.Close()
-	close(l.acceptQueue)
 	return err
 }
 

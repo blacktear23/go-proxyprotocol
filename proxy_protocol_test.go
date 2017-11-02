@@ -322,7 +322,9 @@ func (ts ProxyProtocolTestSuite) TestProxyProtocolListenerCloseInOtherGoroutine(
 	go func() {
 		conn, err := ppl.Accept()
 		c.Assert(conn, IsNil)
-		c.Assert(err, NotNil)
+		opErr, ok := err.(*net.OpError)
+		c.Assert(ok, IsTrue)
+		c.Assert(opErr.Err.Error(), Equals, "use of closed network connection")
 	}()
 
 	time.Sleep(1 * time.Second)
