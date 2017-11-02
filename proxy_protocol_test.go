@@ -293,7 +293,7 @@ func (ts ProxyProtocolTestSuite) TestProxyProtocolV2HeaderReadLocalCommand(c *C)
 	))
 }
 
-func (ts ProxyProtocolTestSuite) TestProxyProtocolListener(c *C) {
+func (ts ProxyProtocolTestSuite) TestProxyProtocolListenerReadHeaderTimeout(c *C) {
 	addr := "127.0.0.1:18080"
 	go func() {
 		l, err := net.Listen("tcp", addr)
@@ -305,6 +305,26 @@ func (ts ProxyProtocolTestSuite) TestProxyProtocolListener(c *C) {
 		conn, err := ppl.Accept()
 		c.Assert(conn, IsNil)
 		c.Assert(err, Equals, ErrHeaderReadTimeout)
+	}()
+
+	conn, err := net.Dial("tcp", addr)
+	c.Assert(err, IsNil)
+	time.Sleep(2 * time.Second)
+	conn.Close()
+}
+
+func (ts ProxyProtocolTestSuite) TestProxyProtocolListenerProxyNotAllowed(c *C) {
+	addr := "127.0.0.1:18080"
+	go func() {
+		l, err := net.Listen("tcp", addr)
+		c.Assert(err, IsNil)
+		ppl, err := NewListener(l, "192.168.1.1", 1)
+		c.Assert(err, IsNil)
+		defer ppl.Close()
+
+		conn, err := ppl.Accept()
+		c.Assert(conn, IsNil)
+		c.Assert(err, Equals, ErrProxyAddressNotAllowed)
 	}()
 
 	conn, err := net.Dial("tcp", addr)
