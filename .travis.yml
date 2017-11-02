@@ -7,7 +7,6 @@ go:
 
 before_install:
   - go get github.com/pingcap/check
-  - bash gitcookie.sh
 
 script:
   - go test -cover
