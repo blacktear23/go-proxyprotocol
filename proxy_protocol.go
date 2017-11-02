@@ -143,7 +143,7 @@ func (l *proxyProtocolListener) acceptLoop() {
 			l.acceptQueue <- &connErr{conn, err}
 		} else if !l.checkAllowed(conn.RemoteAddr()) && l.running() {
 			conn.Close()
-			l.acceptQueue <- &connErr{nil, err}
+			l.acceptQueue <- &connErr{nil, ErrProxyAddressNotAllowed}
 		} else {
 			go l.wrapConn(conn)
 		}
