@@ -324,6 +324,8 @@ func (ts ProxyProtocolTestSuite) TestProxyProtocolListenerProxyNotAllowed(c *C) 
 
 		conn, err := ppl.Accept()
 		c.Assert(err, IsNil)
+		time.Sleep(2 * time.Second)
+		conn.Close()
 	}()
 
 	conn, err := net.Dial("tcp", addr)
