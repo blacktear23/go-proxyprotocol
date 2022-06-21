@@ -1,5 +1,7 @@
 # go-proxyprotocol
 
+[![GoDoc](https://pkg.go.dev/badge/github.com/blacktear23/go-proxyprotocol?utm_source=godoc)](https://pkg.go.dev/github.com/blacktear23/go-proxyprotocol)
+
 PROXY protocol implementation in Go.
 
 ## Usage
