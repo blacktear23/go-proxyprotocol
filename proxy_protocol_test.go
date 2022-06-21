@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"net"
+	"sync"
 	"testing"
 	"time"
 
@@ -24,6 +25,13 @@ type mockBufferConn struct {
 func newMockBufferConn(buffer *bytes.Buffer, raddr net.Addr) net.Conn {
 	return &mockBufferConn{
 		Buffer: buffer,
+		raddr:  raddr,
+	}
+}
+
+func newMockBufferConnBytes(buffer []byte, raddr net.Addr) *mockBufferConn {
+	return &mockBufferConn{
+		Buffer: bytes.NewBuffer(buffer),
 		raddr:  raddr,
 	}
 }
@@ -295,18 +303,21 @@ func (ts ProxyProtocolTestSuite) TestProxyProtocolV2HeaderReadLocalCommand(c *C)
 
 func (ts ProxyProtocolTestSuite) TestProxyProtocolListenerReadHeaderTimeout(c *C) {
 	addr := "127.0.0.1:18080"
+	var wg sync.WaitGroup
+	wg.Add(1)
 	go func() {
 		l, err := net.Listen("tcp", addr)
 		c.Assert(err, IsNil)
 		ppl, err := NewListener(l, "*", 1)
 		c.Assert(err, IsNil)
 		defer ppl.Close()
-
+		wg.Done()
 		conn, err := ppl.Accept()
 		c.Assert(conn, IsNil)
 		c.Assert(err, Equals, ErrHeaderReadTimeout)
 	}()
 
+	wg.Wait()
 	conn, err := net.Dial("tcp", addr)
 	c.Assert(err, IsNil)
 	time.Sleep(2 * time.Second)
@@ -314,20 +325,23 @@ func (ts ProxyProtocolTestSuite) TestProxyProtocolListenerReadHeaderTimeout(c *C
 }
 
 func (ts ProxyProtocolTestSuite) TestProxyProtocolListenerProxyNotAllowed(c *C) {
-	addr := "127.0.0.1:18080"
+	addr := "127.0.0.1:18081"
+	var wg sync.WaitGroup
+	wg.Add(1)
 	go func() {
 		l, err := net.Listen("tcp", addr)
 		c.Assert(err, IsNil)
 		ppl, err := NewListener(l, "192.168.1.1", 1)
 		c.Assert(err, IsNil)
 		defer ppl.Close()
-
+		wg.Done()
 		conn, err := ppl.Accept()
 		c.Assert(err, IsNil)
 		time.Sleep(2 * time.Second)
 		conn.Close()
 	}()
 
+	wg.Wait()
 	conn, err := net.Dial("tcp", addr)
 	c.Assert(err, IsNil)
 	time.Sleep(2 * time.Second)
@@ -335,7 +349,7 @@ func (ts ProxyProtocolTestSuite) TestProxyProtocolListenerProxyNotAllowed(c *C) 
 }
 
 func (ts ProxyProtocolTestSuite) TestProxyProtocolListenerCloseInOtherGoroutine(c *C) {
-	addr := "127.0.0.1:18081"
+	addr := "127.0.0.1:18082"
 	l, err := net.Listen("tcp", addr)
 	c.Assert(err, IsNil)
 	ppl, err := NewListener(l, "*", 1)

@@ -3,8 +3,8 @@ package proxyprotocol
 import (
 	"bytes"
 	"encoding/binary"
-	"fmt"
 	"net"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -79,8 +79,7 @@ func newListener(listener net.Listener, allowedIPs string, headerReadTimeout int
 				allowedNets = append(allowedNets, ipnet)
 				continue
 			}
-			psaip := fmt.Sprintf("%s/32", saip)
-			_, ipnet, err = net.ParseCIDR(psaip)
+			_, ipnet, err = net.ParseCIDR(saip + "/32")
 			if err != nil {
 				return nil, err
 			}
@@ -235,13 +234,23 @@ func (c *proxyProtocolConn) extractClientIPV1(buffer []byte, connRemoteAddr net.
 	clientIPStr := parts[2]
 	clientPortStr := parts[4]
 	iptype := parts[1]
+	ip := net.ParseIP(clientIPStr)
+	if ip == nil {
+		return nil, ErrProxyProtocolV1HeaderInvalid
+	}
+	port, err := strconv.Atoi(clientPortStr)
+	if err != nil {
+		return nil, ErrProxyProtocolV1HeaderInvalid
+	}
+	if port <= 0 || port > 65535 {
+		return nil, ErrProxyProtocolV1HeaderInvalid
+	}
 	switch iptype {
-	case "TCP4":
-		addrStr := fmt.Sprintf("%s:%s", clientIPStr, clientPortStr)
-		return net.ResolveTCPAddr("tcp4", addrStr)
-	case "TCP6":
-		addrStr := fmt.Sprintf("[%s]:%s", clientIPStr, clientPortStr)
-		return net.ResolveTCPAddr("tcp6", addrStr)
+	case "TCP4", "TCP6":
+		return &net.TCPAddr{
+			IP:   ip,
+			Port: port,
+		}, nil
 	case "UNKNOWN":
 		return connRemoteAddr, nil
 	default:
