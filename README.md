@@ -37,3 +37,9 @@ for {
     go processConn(conn)
 }
 ```
+
+## Notice For AWS NLB
+
+If using AWS NLB, as default NLB will not send ProxyProtocol v2 header to server until client send data. This will cause read timeout error if your server send data first. For example: SMTP, FTP, SSH, MySQL etc.
+
+The default value for NLB target group attribute `proxy_protocol_v2.client_to_server.header_placement` is `on_first_ack_with_payload`. User need to contact AWS support to change it to `on_first_ack`.

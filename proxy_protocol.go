@@ -3,6 +3,7 @@ package proxyprotocol
 import (
 	"bytes"
 	"encoding/binary"
+	"io"
 	"net"
 	"strconv"
 	"strings"
@@ -342,7 +343,15 @@ func (c *proxyProtocolConn) readHeader() (int, []byte, error) {
 		if bytes.Equal(buf[0:12], proxyProtocolV2Sig) && (buf[v2CmdPos]&0xF0) == 0x20 {
 			endPos := 16 + int(binary.BigEndian.Uint16(buf[v2LenPos:v2LenPos+2]))
 			if n < endPos {
-				return unknownProtocol, nil, ErrProxyProtocolV2HeaderInvalid
+				// With TLV should skip those bytes
+				moreBytes := endPos - n
+				skipBuf := make([]byte, moreBytes)
+				c.Conn.SetReadDeadline(time.Now().Add(time.Duration(c.headerReadTimeout) * time.Second))
+				_, err = io.ReadFull(c.Conn, skipBuf)
+				if err != nil {
+					return unknownProtocol, nil, ErrHeaderReadTimeout
+				}
+				return proxyProtocolV2, buf, nil
 			}
 			if n > endPos {
 				c.exceedBuffer = buf[endPos:]
