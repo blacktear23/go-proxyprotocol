@@ -3,6 +3,7 @@ package proxyprotocol
 import (
 	"bytes"
 	"encoding/binary"
+	"encoding/hex"
 	"net"
 	"reflect"
 	"sync"
@@ -82,7 +83,7 @@ func assertEquals[T comparable](t *testing.T, val, expected T, comments ...any) 
 		if len(comments) == 0 {
 			t.Errorf("Expect %v but got: %v", expected, val)
 		} else {
-			t.Errorf(comments[0].(string), comments[0:]...)
+			t.Errorf(comments[0].(string), comments[1:]...)
 		}
 	}
 }
@@ -159,17 +160,32 @@ func TestProxyProtocolV2ConnMustNotReadAnyDataAfterHeaderAndTlvs(t *testing.T) {
 	var (
 		tlvData1 = append([]byte{0xE3, 0x00, 0x01}, make([]byte, 100)...)
 	)
+	tests := []struct {
+		buffer []byte
+		expect string
+	}{
+		{
+			buffer: encodeProxyProtocolV2HeaderAndTlv("tcp4", "192.168.1.100:5678", "192.168.1.5:4000", tlvData1),
+			expect: "Other Data",
+		},
+		{
+			buffer: encodeHexString("0d0a0d0a000d0a515549540a21110054c0a82a54ac1f414fbffa0050030004a654259b04003e0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"),
+			expect: "Other Data",
+		},
+	}
+
 	craddr, _ := net.ResolveTCPAddr("tcp4", "192.168.1.51:8080")
-	buffer := encodeProxyProtocolV2HeaderAndTlv("tcp4", "192.168.1.100:5678", "192.168.1.5:4000", tlvData1)
-	expectedString := "Other Data"
-	buffer = append(buffer, []byte(expectedString)...)
-	l, _ := newListener(nil, "*", 5)
-	conn := newMockBufferConn(bytes.NewBuffer(buffer), craddr)
-	wconn, err := l.createProxyProtocolConn(conn)
-	buf := make([]byte, len(expectedString))
-	n, err := wconn.Read(buf)
-	assertNil(t, err)
-	assertEquals(t, string(buf[0:n]), expectedString)
+	for _, test := range tests {
+		buffer := test.buffer
+		buffer = append(buffer, []byte(test.expect)...)
+		l, _ := newListener(nil, "*", 5)
+		conn := newMockBufferConn(bytes.NewBuffer(buffer), craddr)
+		wconn, err := l.createProxyProtocolConn(conn)
+		buf := make([]byte, len(test.expect))
+		n, err := wconn.Read(buf)
+		assertNil(t, err)
+		assertEquals(t, string(buf[0:n]), test.expect)
+	}
 }
 
 func TestProxyProtocolV1HeaderRead(t *testing.T) {
@@ -320,6 +336,14 @@ func encodeProxyProtocolV2HeaderAndTlv(network, srcAddr, dstAddr string, tlv []b
 	return append(buffer, tlv...)
 }
 
+func encodeHexString(data string) []byte {
+	ret, err := hex.DecodeString(data)
+	if err != nil {
+		panic(err)
+	}
+	return ret
+}
+
 func TestProxyProtocolV2HeaderRead(t *testing.T) {
 	var (
 		tlvData1 = append([]byte{0xE3, 0x00, 0x01}, make([]byte, 100)...)
@@ -340,6 +364,10 @@ func TestProxyProtocolV2HeaderRead(t *testing.T) {
 		{
 			buffer:     encodeProxyProtocolV2HeaderAndTlv("tcp4", "192.168.1.100:5678", "192.168.1.5:4000", tlvData1),
 			expectedIP: "192.168.1.100:5678",
+		},
+		{
+			buffer:     encodeHexString("0d0a0d0a000d0a515549540a21110054c0a82a54ac1f414fbffa0050030004a654259b04003e0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"),
+			expectedIP: "192.168.42.84:49146",
 		},
 	}
 
