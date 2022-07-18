@@ -351,9 +351,6 @@ func (c *proxyProtocolConn) readHeader() (int, []byte, error) {
 				if err != nil {
 					return unknownProtocol, nil, ErrHeaderReadTimeout
 				}
-				c.exceedBufferReaded = true
-				c.exceedBuffer = nil
-				c.exceedBufferLen = 0
 				return proxyProtocolV2, buf, nil
 			}
 			if n > endPos {
