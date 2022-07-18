@@ -155,6 +155,23 @@ func TestProxyProtocolV2ConnMustNotReadAnyDataAfterHeader(t *testing.T) {
 	assertEquals(t, string(buf[0:n]), expectedString)
 }
 
+func TestProxyProtocolV2ConnMustNotReadAnyDataAfterHeaderAndTlvs(t *testing.T) {
+	var (
+		tlvData1 = append([]byte{0xE3, 0x00, 0x01}, make([]byte, 100)...)
+	)
+	craddr, _ := net.ResolveTCPAddr("tcp4", "192.168.1.51:8080")
+	buffer := encodeProxyProtocolV2HeaderAndTlv("tcp4", "192.168.1.100:5678", "192.168.1.5:4000", tlvData1)
+	expectedString := "Other Data"
+	buffer = append(buffer, []byte(expectedString)...)
+	l, _ := newListener(nil, "*", 5)
+	conn := newMockBufferConn(bytes.NewBuffer(buffer), craddr)
+	wconn, err := l.createProxyProtocolConn(conn)
+	buf := make([]byte, len(expectedString))
+	n, err := wconn.Read(buf)
+	assertNil(t, err)
+	assertEquals(t, string(buf[0:n]), expectedString)
+}
+
 func TestProxyProtocolV1HeaderRead(t *testing.T) {
 	buffer := []byte("PROXY TCP4 192.168.1.100 192.168.1.50 5678 3306\r\nOther Data")
 	expectedString := "PROXY TCP4 192.168.1.100 192.168.1.50 5678 3306\r\n"
@@ -274,7 +291,39 @@ func encodeProxyProtocolV2Header(network, srcAddr, dstAddr string) []byte {
 	return buffer
 }
 
+func encodeProxyProtocolV2HeaderAndTlv(network, srcAddr, dstAddr string, tlv []byte) []byte {
+	saddr, _ := net.ResolveTCPAddr(network, srcAddr)
+	daddr, _ := net.ResolveTCPAddr(network, dstAddr)
+	buffer := make([]byte, 1024)
+	copy(buffer, proxyProtocolV2Sig)
+	// Command
+	buffer[v2CmdPos] = 0x21
+	tlvLen := uint16(len(tlv))
+	// Famly
+	if network == "tcp4" {
+		buffer[v2FamlyPos] = 0x11
+		binary.BigEndian.PutUint16(buffer[14:14+2], 12+tlvLen)
+		copy(buffer[16:16+4], []byte(saddr.IP.To4()))
+		copy(buffer[20:20+4], []byte(daddr.IP.To4()))
+		binary.BigEndian.PutUint16(buffer[24:24+2], uint16(saddr.Port))
+		binary.BigEndian.PutUint16(buffer[26:26+2], uint16(saddr.Port))
+		return append(buffer[0:28], tlv...)
+	} else if network == "tcp6" {
+		buffer[v2FamlyPos] = 0x21
+		binary.BigEndian.PutUint16(buffer[14:14+2], 36+tlvLen)
+		copy(buffer[16:16+16], []byte(saddr.IP.To16()))
+		copy(buffer[32:32+16], []byte(daddr.IP.To16()))
+		binary.BigEndian.PutUint16(buffer[48:48+2], uint16(saddr.Port))
+		binary.BigEndian.PutUint16(buffer[50:50+2], uint16(saddr.Port))
+		return append(buffer[0:52], tlv...)
+	}
+	return append(buffer, tlv...)
+}
+
 func TestProxyProtocolV2HeaderRead(t *testing.T) {
+	var (
+		tlvData1 = append([]byte{0xE3, 0x00, 0x01}, make([]byte, 100)...)
+	)
 	craddr, _ := net.ResolveTCPAddr("tcp4", "192.168.1.51:8080")
 	tests := []struct {
 		buffer     []byte
@@ -288,17 +337,25 @@ func TestProxyProtocolV2HeaderRead(t *testing.T) {
 			buffer:     encodeProxyProtocolV2Header("tcp6", "[2001:db8:85a3::8a2e:370:7334]:5678", "[2001:db8:85a3::8a2e:370:8000]:4000"),
 			expectedIP: "[2001:db8:85a3::8a2e:370:7334]:5678",
 		},
+		{
+			buffer:     encodeProxyProtocolV2HeaderAndTlv("tcp4", "192.168.1.100:5678", "192.168.1.5:4000", tlvData1),
+			expectedIP: "192.168.1.100:5678",
+		},
 	}
 
 	l, _ := newListener(nil, "*", 5)
 	for _, test := range tests {
 		conn := newMockBufferConn(bytes.NewBuffer(test.buffer), craddr)
 		wconn, err := l.createProxyProtocolConn(conn)
-		clientIP := wconn.RemoteAddr()
-		if err == nil {
-			assertEquals(t, clientIP.String(), test.expectedIP, "Buffer:%v\nExpect: %s Got: %s", test.buffer, test.expectedIP, clientIP.String())
+		if err != nil {
+			t.Errorf("Got Error: %v", err)
 		} else {
-			t.Errorf("Buffer:%v\nExpect: %s Got Error: %v", test.buffer, test.expectedIP, err)
+			clientIP := wconn.RemoteAddr()
+			if err == nil {
+				assertEquals(t, clientIP.String(), test.expectedIP, "Buffer:%v\nExpect: %s Got: %s", test.buffer, test.expectedIP, clientIP.String())
+			} else {
+				t.Errorf("Buffer:%v\nExpect: %s Got Error: %v", test.buffer, test.expectedIP, err)
+			}
 		}
 	}
 }
