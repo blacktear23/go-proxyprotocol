@@ -360,12 +360,15 @@ func (c *proxyProtocolConn) Read(buffer []byte) (int, error) {
 
 func (c *proxyProtocolConn) readHeader() (int, []byte, error) {
 	buf := make([]byte, proxyProtocolV1MaxHeaderLen)
-	// This mean all header data should be read in headerReadTimeout seconds.
-	c.Conn.SetReadDeadline(time.Now().Add(time.Duration(c.headerReadTimeout) * time.Second))
-	// When function return clean read deadline.
-	defer func() {
-		c.Conn.SetReadDeadline(time.Time{})
-	}()
+	// Should not update read timeout when in lazy mode
+	if !c.lazyMode {
+		// This mean all header data should be read in headerReadTimeout seconds.
+		c.Conn.SetReadDeadline(time.Now().Add(time.Duration(c.headerReadTimeout) * time.Second))
+		// When function return clean read deadline.
+		defer func() {
+			c.Conn.SetReadDeadline(time.Time{})
+		}()
+	}
 	n, err := c.Conn.Read(buf)
 	if err != nil {
 		return unknownProtocol, nil, ErrHeaderReadTimeout
@@ -377,7 +380,12 @@ func (c *proxyProtocolConn) readHeader() (int, []byte, error) {
 				// With TLV should skip those bytes
 				moreBytes := endPos - n
 				skipBuf := make([]byte, moreBytes)
-				c.Conn.SetReadDeadline(time.Now().Add(time.Duration(c.headerReadTimeout) * time.Second))
+
+				// Should not update read timeout when in lazy mode
+				if !c.lazyMode {
+					c.Conn.SetReadDeadline(time.Now().Add(time.Duration(c.headerReadTimeout) * time.Second))
+				}
+
 				_, err = io.ReadFull(c.Conn, skipBuf)
 				if err != nil {
 					return unknownProtocol, nil, ErrHeaderReadTimeout
