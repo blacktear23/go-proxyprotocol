@@ -43,6 +43,7 @@ type connErr struct {
 type proxyProtocolListener struct {
 	listener          net.Listener
 	allowAll          bool
+	lazyMode          bool
 	allowedNets       []*net.IPNet
 	headerReadTimeout int // Unit is second
 	acceptQueue       chan *connErr
@@ -60,14 +61,27 @@ func IsProxyProtocolError(err error) bool {
 // * allowedIPs is protocol allowed addresses or CIDRs split by `,` if use '*' means allow any address
 // * headerReadTimeout is timeout for PROXY protocol header read
 func NewListener(listener net.Listener, allowedIPs string, headerReadTimeout int) (net.Listener, error) {
-	ppl, err := newListener(listener, allowedIPs, headerReadTimeout)
+	ppl, err := newListener(listener, allowedIPs, headerReadTimeout, false)
 	if err == nil {
 		go ppl.acceptLoop()
 	}
 	return ppl, err
 }
 
-func newListener(listener net.Listener, allowedIPs string, headerReadTimeout int) (*proxyProtocolListener, error) {
+// Create new PROXY protocol listener for lazy mode. Lazy mode means PROXY protocol header will be processed at first
+// `Read` call.
+// * listener is basic listener for TCP
+// * allowedIPs is protocol allowed addresses or CIDRs split by `,` if use '*' means allow any address
+// * headerReadTimeout is timeout for PROXY protocol header read
+func NewLazyListener(listener net.Listener, allowedIPs string, headerReadTimeout int) (net.Listener, error) {
+	ppl, err := newListener(listener, allowedIPs, headerReadTimeout, true)
+	if err == nil {
+		go ppl.acceptLoop()
+	}
+	return ppl, err
+}
+
+func newListener(listener net.Listener, allowedIPs string, headerReadTimeout int, lazyMode bool) (*proxyProtocolListener, error) {
 	allowAll := false
 	allowedNets := []*net.IPNet{}
 	if allowedIPs == "*" {
@@ -94,6 +108,7 @@ func newListener(listener net.Listener, allowedIPs string, headerReadTimeout int
 		headerReadTimeout: headerReadTimeout,
 		acceptQueue:       make(chan *connErr, 1),
 		runningFlag:       1,
+		lazyMode:          lazyMode,
 	}, nil
 }
 
@@ -120,11 +135,17 @@ func (l *proxyProtocolListener) createProxyProtocolConn(conn net.Conn) (*proxyPr
 	ppconn := &proxyProtocolConn{
 		Conn:              conn,
 		headerReadTimeout: l.headerReadTimeout,
+		lazyMode:          l.lazyMode,
+		headerReaded:      false,
 	}
-	err := ppconn.readClientAddrBehindProxy(conn.RemoteAddr())
-	if err != nil {
-		ppconn.Close()
-		return nil, err
+	if !l.lazyMode {
+		err := ppconn.readClientAddrBehindProxy(conn.RemoteAddr())
+		if err != nil {
+			ppconn.Close()
+			return nil, err
+		}
+	} else {
+		ppconn.clientIP = conn.RemoteAddr()
 	}
 	return ppconn, nil
 }
@@ -192,6 +213,8 @@ type proxyProtocolConn struct {
 	exceedBufferStart  int
 	exceedBufferLen    int
 	exceedBufferReaded bool
+	lazyMode           bool
+	headerReaded       bool
 }
 
 func (c *proxyProtocolConn) readClientAddrBehindProxy(connRemoteAddr net.Addr) error {
@@ -210,6 +233,7 @@ func (c *proxyProtocolConn) parseHeader(connRemoteAddr net.Addr) error {
 			return v1err
 		}
 		c.clientIP = raddr
+		c.headerReaded = true
 		return nil
 	case proxyProtocolV2:
 		raddr, v2err := c.extraceClientIPV2(buffer, connRemoteAddr)
@@ -217,6 +241,7 @@ func (c *proxyProtocolConn) parseHeader(connRemoteAddr net.Addr) error {
 			return v2err
 		}
 		c.clientIP = raddr
+		c.headerReaded = true
 		return nil
 	default:
 		panic("Should not come here")
@@ -299,6 +324,12 @@ func (c *proxyProtocolConn) RemoteAddr() net.Addr {
 
 // Read received data
 func (c *proxyProtocolConn) Read(buffer []byte) (int, error) {
+	if c.lazyMode && !c.headerReaded {
+		err := c.parseHeader(c.clientIP)
+		if err != nil {
+			return 0, err
+		}
+	}
 	if c.exceedBufferReaded {
 		return c.Conn.Read(buffer)
 	}

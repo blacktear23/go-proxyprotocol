@@ -43,3 +43,20 @@ for {
 If using AWS NLB, as default NLB will not send ProxyProtocol v2 header to server until client send data. This will cause read timeout error if your server send data first. For example: SMTP, FTP, SSH, MySQL etc.
 
 The default value for NLB target group attribute `proxy_protocol_v2.client_to_server.header_placement` is `on_first_ack_with_payload`. User need to contact AWS support to change it to `on_first_ack`.
+
+## Lazy Mode
+
+`go-proxyprotocol` support lazy mode for ProxyProtocol header parse. Using this mode the header parse step will postpone to first `Conn.Read` function call. This will handle AWS NLB problem. And user must ensure that the client IP address must be get after a `Conn.Read` call.
+
+Using lazy mode is simple:
+
+```go
+// Create listener
+l, err := net.Listener("tcp", "...")
+
+
+// Wrap listener as PROXY protocol listener and enable lazy mode.
+ppl, err := proxyprotocol.NewLazyListener(l, "*", 5)
+
+...
+```
