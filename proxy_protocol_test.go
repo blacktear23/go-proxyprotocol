@@ -81,7 +81,7 @@ func assertNil(t *testing.T, val any) {
 func assertEquals[T comparable](t *testing.T, val, expected T, comments ...any) {
 	if val != expected {
 		if len(comments) == 0 {
-			t.Errorf("Expect %v but got: %v", expected, val)
+			t.Errorf("Expect:\n  `%v`\nbut got:\n  `%v`\n", expected, val)
 		} else {
 			t.Errorf(comments[0].(string), comments[1:]...)
 		}
@@ -576,6 +576,12 @@ func TestProxyProtocolLazyModeFallback(t *testing.T) {
 		{
 			buffer:     []byte("Some bad data"),
 			expectData: "Some bad data",
+			expectIP:   "192.168.1.51:8080",
+			expectErr:  false,
+		},
+		{
+			buffer:     []byte("Other Data for a very long long long long long long long long long long long long long long long long long long long long content"),
+			expectData: "Other Data for a very long long long long long long long long long long long long long long long long long long long long content",
 			expectIP:   "192.168.1.51:8080",
 			expectErr:  false,
 		},
