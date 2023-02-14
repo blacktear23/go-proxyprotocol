@@ -28,8 +28,10 @@ const (
 var (
 	ErrProxyProtocolV1HeaderInvalid = errors.New("PROXY Protocol v1 header is invalid")
 	ErrProxyProtocolV2HeaderInvalid = errors.New("PROXY Protocol v2 header is invalid")
+	ErrProxyProtocolInvalid         = errors.New("Invalid PROXY Protocol Header")
 	ErrHeaderReadTimeout            = errors.New("Header read timeout")
 	proxyProtocolV2Sig              = []byte{0x0D, 0x0A, 0x0D, 0x0A, 0x00, 0x0D, 0x0A, 0x51, 0x55, 0x49, 0x54, 0x0A}
+	proxyProtocolV1Sig              = []byte("PROXY")
 
 	_ net.Conn     = &proxyProtocolConn{}
 	_ net.Listener = &proxyProtocolListener{}
@@ -42,26 +44,28 @@ type connErr struct {
 
 type proxyProtocolListener struct {
 	listener          net.Listener
-	allowAll          bool
-	lazyMode          bool
 	allowedNets       []*net.IPNet
+	runningFlag       int32
 	headerReadTimeout int // Unit is second
 	acceptQueue       chan *connErr
-	runningFlag       int32
+	allowAll          bool
+	lazyMode          bool
+	fallbackable      bool
 }
 
 func IsProxyProtocolError(err error) bool {
 	return err == ErrProxyProtocolV1HeaderInvalid ||
 		err == ErrProxyProtocolV2HeaderInvalid ||
-		err == ErrHeaderReadTimeout
+		err == ErrHeaderReadTimeout ||
+		err == ErrProxyProtocolInvalid
 }
 
 // Create new PROXY protocol listener
 // * listener is basic listener for TCP
 // * allowedIPs is protocol allowed addresses or CIDRs split by `,` if use '*' means allow any address
 // * headerReadTimeout is timeout for PROXY protocol header read
-func NewListener(listener net.Listener, allowedIPs string, headerReadTimeout int) (net.Listener, error) {
-	ppl, err := newListener(listener, allowedIPs, headerReadTimeout, false)
+func NewListener(listener net.Listener, allowedIPs string, headerReadTimeout int, fallbackable bool) (net.Listener, error) {
+	ppl, err := newListener(listener, allowedIPs, headerReadTimeout, false, fallbackable)
 	if err == nil {
 		go ppl.acceptLoop()
 	}
@@ -73,15 +77,15 @@ func NewListener(listener net.Listener, allowedIPs string, headerReadTimeout int
 // * listener is basic listener for TCP
 // * allowedIPs is protocol allowed addresses or CIDRs split by `,` if use '*' means allow any address
 // * headerReadTimeout is timeout for PROXY protocol header read
-func NewLazyListener(listener net.Listener, allowedIPs string, headerReadTimeout int) (net.Listener, error) {
-	ppl, err := newListener(listener, allowedIPs, headerReadTimeout, true)
+func NewLazyListener(listener net.Listener, allowedIPs string, headerReadTimeout int, fallbackable bool) (net.Listener, error) {
+	ppl, err := newListener(listener, allowedIPs, headerReadTimeout, true, fallbackable)
 	if err == nil {
 		go ppl.acceptLoop()
 	}
 	return ppl, err
 }
 
-func newListener(listener net.Listener, allowedIPs string, headerReadTimeout int, lazyMode bool) (*proxyProtocolListener, error) {
+func newListener(listener net.Listener, allowedIPs string, headerReadTimeout int, lazyMode bool, fallbackable bool) (*proxyProtocolListener, error) {
 	allowAll := false
 	allowedNets := []*net.IPNet{}
 	if allowedIPs == "*" {
@@ -109,6 +113,7 @@ func newListener(listener net.Listener, allowedIPs string, headerReadTimeout int
 		acceptQueue:       make(chan *connErr, 1),
 		runningFlag:       1,
 		lazyMode:          lazyMode,
+		fallbackable:      fallbackable,
 	}, nil
 }
 
@@ -137,6 +142,7 @@ func (l *proxyProtocolListener) createProxyProtocolConn(conn net.Conn) (*proxyPr
 		headerReadTimeout: l.headerReadTimeout,
 		lazyMode:          l.lazyMode,
 		headerReaded:      false,
+		fallbackable:      l.fallbackable,
 	}
 	if !l.lazyMode {
 		err := ppconn.readClientAddrBehindProxy(conn.RemoteAddr())
@@ -215,6 +221,7 @@ type proxyProtocolConn struct {
 	exceedBufferReaded bool
 	lazyMode           bool
 	headerReaded       bool
+	fallbackable       bool
 }
 
 func (c *proxyProtocolConn) readClientAddrBehindProxy(connRemoteAddr net.Addr) error {
@@ -243,6 +250,14 @@ func (c *proxyProtocolConn) parseHeader(connRemoteAddr net.Addr) error {
 		c.clientIP = raddr
 		c.headerReaded = true
 		return nil
+	case unknownProtocol:
+		if c.fallbackable {
+			c.exceedBuffer = buffer
+			c.exceedBufferLen = len(buffer)
+			c.headerReaded = true
+			return nil
+		}
+		return ErrProxyProtocolInvalid
 	default:
 		panic("Should not come here")
 	}
@@ -374,6 +389,7 @@ func (c *proxyProtocolConn) readHeader() (int, []byte, error) {
 		return unknownProtocol, nil, ErrHeaderReadTimeout
 	}
 	if n >= 16 {
+		// Chech Proxy Protocol V2 header
 		if bytes.Equal(buf[0:12], proxyProtocolV2Sig) && (buf[v2CmdPos]&0xF0) == 0x20 {
 			endPos := 16 + int(binary.BigEndian.Uint16(buf[v2LenPos:v2LenPos+2]))
 			if n < endPos {
@@ -400,22 +416,23 @@ func (c *proxyProtocolConn) readHeader() (int, []byte, error) {
 		}
 	}
 	if n >= 5 {
-		if string(buf[0:5]) != "PROXY" {
-			return unknownProtocol, nil, ErrProxyProtocolV1HeaderInvalid
+		// Chech Proxy Protocol V1 header
+		if bytes.Equal(buf[0:5], proxyProtocolV1Sig) {
+			pos := bytes.IndexByte(buf, byte(10))
+			if pos == -1 {
+				return unknownProtocol, nil, ErrProxyProtocolV1HeaderInvalid
+			}
+			if buf[pos-1] != byte(13) {
+				return unknownProtocol, nil, ErrProxyProtocolV1HeaderInvalid
+			}
+			endPos := pos
+			if n > endPos {
+				c.exceedBuffer = buf[endPos+1:]
+				c.exceedBufferLen = n - endPos
+			}
+			return proxyProtocolV1, buf[0 : endPos+1], nil
 		}
-		pos := bytes.IndexByte(buf, byte(10))
-		if pos == -1 {
-			return unknownProtocol, nil, ErrProxyProtocolV1HeaderInvalid
-		}
-		if buf[pos-1] != byte(13) {
-			return unknownProtocol, nil, ErrProxyProtocolV1HeaderInvalid
-		}
-		endPos := pos
-		if n > endPos {
-			c.exceedBuffer = buf[endPos+1:]
-			c.exceedBufferLen = n - endPos
-		}
-		return proxyProtocolV1, buf[0 : endPos+1], nil
 	}
-	return unknownProtocol, nil, ErrProxyProtocolV1HeaderInvalid
+	// Unknown protocol
+	return unknownProtocol, buf[0:n], nil
 }

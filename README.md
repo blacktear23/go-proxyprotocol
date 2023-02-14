@@ -21,7 +21,7 @@ basic usage
 l, err := net.Listen("tcp", "...")
 
 // Wrap listener as PROXY protocol listener
-ppl, err := proxyprotocol.NewListener(l, "*", 5)
+ppl, err := proxyprotocol.NewListener(l, "*", 5, false)
 
 for {
     conn, err := ppl.Accept()
@@ -56,7 +56,22 @@ l, err := net.Listener("tcp", "...")
 
 
 // Wrap listener as PROXY protocol listener and enable lazy mode.
-ppl, err := proxyprotocol.NewLazyListener(l, "*", 5)
+ppl, err := proxyprotocol.NewLazyListener(l, "*", 5, false)
+
+...
+```
+
+## Fallback-able
+
+`go-proxyprotocol` support fallback-able mode for ProxyProtocol header process. When multiple client with different system connect to the server and some using PROXY protocol some not and it's hard to determine the allowed IP range, just set `fallbackable` parameter to `true`, it can handle this.
+
+```go
+// Create listener
+l, err := net.Listener("tcp", "...")
+
+
+// Wrap listener as PROXY protocol listener and enable lazy mode and fallback-able
+ppl, err := proxyprotocol.NewLazyListener(l, "*", 5, true)
 
 ...
 ```
