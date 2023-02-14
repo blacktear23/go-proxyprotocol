@@ -89,10 +89,10 @@ func assertEquals[T comparable](t *testing.T, val, expected T, comments ...any) 
 }
 
 func TestProxyProtocolConnCheckAllowed(t *testing.T) {
-	l, _ := newListener(nil, "*", 5, false)
+	l, _ := newListener(nil, "*", 5, false, false)
 	raddr, _ := net.ResolveTCPAddr("tcp4", "192.168.1.100:8080")
 	assertTrue(t, l.checkAllowed(raddr))
-	l, _ = newListener(nil, "192.168.1.0/24,192.168.2.0/24", 5, false)
+	l, _ = newListener(nil, "192.168.1.0/24,192.168.2.0/24", 5, false, false)
 	for _, ipstr := range []string{"192.168.1.100:8080", "192.168.2.100:8080"} {
 		raddr, _ := net.ResolveTCPAddr("tcp4", ipstr)
 		assertTrue(t, l.checkAllowed(raddr))
@@ -107,7 +107,7 @@ func TestProxyProtocolConnMustNotReadAnyDataAfterCLRF(t *testing.T) {
 	buffer := []byte("PROXY TCP4 192.168.1.100 192.168.1.50 5678 3306\r\nOther Data")
 	conn := newMockBufferConn(bytes.NewBuffer(buffer), nil)
 
-	l, _ := newListener(nil, "*", 5, false)
+	l, _ := newListener(nil, "*", 5, false, false)
 	wconn, err := l.createProxyProtocolConn(conn)
 	assertNil(t, err)
 
@@ -147,7 +147,7 @@ func TestProxyProtocolV2ConnMustNotReadAnyDataAfterHeader(t *testing.T) {
 	buffer := encodeProxyProtocolV2Header("tcp4", "192.168.1.100:5678", "192.168.1.5:4000")
 	expectedString := "Other Data"
 	buffer = append(buffer, []byte(expectedString)...)
-	l, _ := newListener(nil, "*", 5, false)
+	l, _ := newListener(nil, "*", 5, false, false)
 	conn := newMockBufferConn(bytes.NewBuffer(buffer), craddr)
 	wconn, err := l.createProxyProtocolConn(conn)
 	buf := make([]byte, len(expectedString))
@@ -182,7 +182,7 @@ func TestProxyProtocolV2ConnMustNotReadAnyDataAfterHeaderAndTlvs(t *testing.T) {
 	for _, test := range tests {
 		buffer := test.buffer
 		buffer = append(buffer, []byte(test.expect)...)
-		l, _ := newListener(nil, "*", 5, false)
+		l, _ := newListener(nil, "*", 5, false, false)
 		conn := newMockBufferConn(bytes.NewBuffer(buffer), craddr)
 		wconn, err := l.createProxyProtocolConn(conn)
 		buf := make([]byte, len(test.expect))
@@ -265,7 +265,7 @@ func TestProxyProtocolV1ExtractClientIP(t *testing.T) {
 		},
 	}
 
-	l, _ := newListener(nil, "*", 5, false)
+	l, _ := newListener(nil, "*", 5, false, false)
 	for _, test := range tests {
 		conn := newMockBufferConn(bytes.NewBuffer(test.buffer), craddr)
 		wconn, err := l.createProxyProtocolConn(conn)
@@ -379,7 +379,7 @@ func TestProxyProtocolV2HeaderRead(t *testing.T) {
 		},
 	}
 
-	l, _ := newListener(nil, "*", 5, false)
+	l, _ := newListener(nil, "*", 5, false, false)
 	for _, test := range tests {
 		conn := newMockBufferConn(bytes.NewBuffer(test.buffer), craddr)
 		wconn, err := l.createProxyProtocolConn(conn)
@@ -400,7 +400,7 @@ func TestProxyProtocolV2HeaderReadLocalCommand(t *testing.T) {
 	craddr, _ := net.ResolveTCPAddr("tcp4", "192.168.1.51:8080")
 	buffer := encodeProxyProtocolV2Header("tcp4", "192.168.1.100:5678", "192.168.1.5:4000")
 	buffer[v2CmdPos] = 0x20
-	l, _ := newListener(nil, "*", 5, false)
+	l, _ := newListener(nil, "*", 5, false, false)
 	conn := newMockBufferConn(bytes.NewBuffer(buffer), craddr)
 	wconn, err := l.createProxyProtocolConn(conn)
 	clientIP := wconn.RemoteAddr()
@@ -415,7 +415,7 @@ func TestProxyProtocolListenerReadHeaderTimeout(t *testing.T) {
 	go func() {
 		l, err := net.Listen("tcp", addr)
 		assertNil(t, err)
-		ppl, err := NewListener(l, "*", 1)
+		ppl, err := NewListener(l, "*", 1, false)
 		assertNil(t, err)
 		defer ppl.Close()
 		wg.Done()
@@ -438,7 +438,7 @@ func TestProxyProtocolListenerProxyNotAllowed(t *testing.T) {
 	go func() {
 		l, err := net.Listen("tcp", addr)
 		assertNil(t, err)
-		ppl, err := NewListener(l, "192.168.1.1", 1)
+		ppl, err := NewListener(l, "192.168.1.1", 1, false)
 		assertNil(t, err)
 		defer ppl.Close()
 		wg.Done()
@@ -459,7 +459,7 @@ func TestProxyProtocolListenerCloseInOtherGoroutine(t *testing.T) {
 	addr := "127.0.0.1:18082"
 	l, err := net.Listen("tcp", addr)
 	assertNil(t, err)
-	ppl, err := NewListener(l, "*", 1)
+	ppl, err := NewListener(l, "*", 1, false)
 	assertNil(t, err)
 	go func() {
 		conn, err := ppl.Accept()
@@ -516,7 +516,7 @@ func TestProxyProtocolLazyMode(t *testing.T) {
 			expectErr:  true,
 		},
 	}
-	l, _ := newListener(nil, "*", 5, true)
+	l, _ := newListener(nil, "*", 5, true, false)
 	for _, test := range tests {
 		buffer := test.buffer
 		buffer = append(buffer, []byte(test.expectData)...)
@@ -525,6 +525,68 @@ func TestProxyProtocolLazyMode(t *testing.T) {
 		clientIP := wconn.RemoteAddr()
 		assertEquals(t, clientIP.String(), craddr.String(), "Buffer:%s\nExpect: %s Got: %s", string(buffer), craddr.String(), clientIP.String())
 
+		buf := make([]byte, len(test.expectData))
+		n, err := wconn.Read(buf)
+		if test.expectErr {
+			if err == nil {
+				t.Errorf("Buffer: %s\nExpect Error", string(buffer))
+			}
+		} else {
+			assertNil(t, err)
+			assertEquals(t, string(buf[0:n]), test.expectData)
+			clientIP = wconn.RemoteAddr()
+			assertEquals(t, clientIP.String(), test.expectIP, "Buffer:%s\nExpect: %s Got: %s", string(buffer), test.expectIP, clientIP.String())
+		}
+	}
+}
+
+func TestProxyProtocolLazyModeFallback(t *testing.T) {
+	tlvData1 := append([]byte{0xE3, 0x00, 0x01}, make([]byte, 100)...)
+	craddr, _ := net.ResolveTCPAddr("tcp4", "192.168.1.51:8080")
+	tests := []struct {
+		buffer     []byte
+		expectData string
+		expectIP   string
+		expectErr  bool
+	}{
+		{
+			buffer:     []byte("Raw Connection Other Data"),
+			expectData: "Raw Connection Other Data",
+			expectIP:   "192.168.1.51:8080",
+			expectErr:  false,
+		},
+		{
+			buffer:     append(encodeProxyProtocolV2HeaderAndTlv("tcp4", "192.168.1.100:5678", "192.168.1.5:4000", tlvData1), []byte("Other Data")...),
+			expectData: "Other Data",
+			expectIP:   "192.168.1.100:5678",
+			expectErr:  false,
+		},
+		{
+			buffer:     append(encodeProxyProtocolV2Header("tcp4", "192.168.1.100:5678", "192.168.1.5:4000"), []byte("Other Data")...),
+			expectData: "Other Data",
+			expectIP:   "192.168.1.100:5678",
+			expectErr:  false,
+		},
+		{
+			buffer:     []byte("PROXY MCP3 192.168.1.100 192.168.1.50 5678 3306\r\nOther Data"),
+			expectData: "Other Data",
+			expectIP:   "",
+			expectErr:  true,
+		},
+		{
+			buffer:     []byte("Some bad data"),
+			expectData: "Some bad data",
+			expectIP:   "192.168.1.51:8080",
+			expectErr:  false,
+		},
+	}
+	l, _ := newListener(nil, "*", 5, true, true)
+	for _, test := range tests {
+		buffer := test.buffer
+		conn := newMockBufferConn(bytes.NewBuffer(buffer), craddr)
+		wconn, err := l.createProxyProtocolConn(conn)
+		clientIP := wconn.RemoteAddr()
+		assertEquals(t, clientIP.String(), craddr.String(), "Buffer:%s\nExpect: %s Got: %s", string(buffer), craddr.String(), clientIP.String())
 		buf := make([]byte, len(test.expectData))
 		n, err := wconn.Read(buf)
 		if test.expectErr {
