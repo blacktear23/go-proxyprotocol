@@ -131,8 +131,8 @@ func TestProxyProtocolConnMustNotReadAnyDataAfterCLRF(t *testing.T) {
 	assertEquals(t, n, 5)
 	assertEquals(t, string(buf[0:n]), " Data")
 
-	buffer = []byte("PROXY TCP4 192.168.1.100 192.168.1.50 5678 3306\r\nOther Data for a very long long long long long long long long long content")
-	expectedString = "Other Data for a very long long long long long long long long long content"
+	buffer = []byte("PROXY TCP4 192.168.1.100 192.168.1.50 5678 3306\r\nOther Data for a very long long long long long content")
+	expectedString = "Other Data for a very long long long long long content"
 	conn = newMockBufferConn(bytes.NewBuffer(buffer), nil)
 	wconn, err = l.createProxyProtocolConn(conn)
 	assertNil(t, err)
@@ -170,7 +170,7 @@ func TestProxyProtocolV2ConnMustNotReadAnyDataAfterHeaderAndTlvs(t *testing.T) {
 		},
 		{
 			buffer: encodeHexString("0d0a0d0a000d0a515549540a21110054c0a82a54ac1f414fbffa0050030004a654259b04003e0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"),
-			expect: "Other Data",
+			expect: "Other",
 		},
 		{
 			buffer: encodeHexString("0d0a0d0a000d0a515549540a20000000"),
@@ -499,7 +499,7 @@ func TestProxyProtocolLazyMode(t *testing.T) {
 		},
 		{
 			buffer:     encodeHexString("0d0a0d0a000d0a515549540a21110054c0a82a54ac1f414fbffa0050030004a654259b04003e0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"),
-			expectData: "Other Data",
+			expectData: "Other",
 			expectIP:   "192.168.42.84:49146",
 			expectErr:  false,
 		},
@@ -580,8 +580,8 @@ func TestProxyProtocolLazyModeFallback(t *testing.T) {
 			expectErr:  false,
 		},
 		{
-			buffer:     []byte("Other Data for a very long long long long long long long long long long long long long long long long long long long long content"),
-			expectData: "Other Data for a very long long long long long long long long long long long long long long long long long long long long content",
+			buffer:     []byte("Other Data for a very long long long long long long long long long long long long long long content"),
+			expectData: "Other Data for a very long long long long long long long long long long long long long long content",
 			expectIP:   "192.168.1.51:8080",
 			expectErr:  false,
 		},
