@@ -363,6 +363,13 @@ func (c *proxyProtocolConn) Read(buffer []byte) (int, error) {
 	}
 	// buffer length is great than exceedBuffer length
 	copy(buffer[0:nExceedRead], c.exceedBuffer[c.exceedBufferStart:])
+	if c.fallbackable && nExceedRead < proxyProtocolV1MaxHeaderLen {
+		// If fallbackable and exceed read buffer is less than max first read buffer size.
+		// Means no need to read again
+		c.exceedBufferStart = c.exceedBufferLen
+		c.exceedBufferReaded = true
+		return nExceedRead, nil
+	}
 	n, err := c.Conn.Read(buffer[nExceedRead:])
 	if err == nil {
 		// If read is success set buffer start to buffer length
