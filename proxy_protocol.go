@@ -381,6 +381,9 @@ func (c *proxyProtocolConn) readHeader() (int, []byte, error) {
 	}
 	n, err := c.Conn.Read(buf)
 	if err != nil {
+		if c.lazyMode {
+			return unknownProtocol, nil, err
+		}
 		return unknownProtocol, nil, ErrHeaderReadTimeout
 	}
 	if n >= 16 {

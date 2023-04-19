@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"encoding/hex"
+	"io"
 	"net"
 	"reflect"
 	"sync"
@@ -604,6 +605,29 @@ func TestProxyProtocolLazyModeFallback(t *testing.T) {
 			assertEquals(t, string(buf[0:n]), test.expectData)
 			clientIP = wconn.RemoteAddr()
 			assertEquals(t, clientIP.String(), test.expectIP, "Buffer:%s\nExpect: %s Got: %s", string(buffer), test.expectIP, clientIP.String())
+		}
+	}
+}
+
+func TestProxyProtocolListenerReadTimeoutWithLazyMode(t *testing.T) {
+	addr, _ := net.ResolveTCPAddr("tcp4", "192.168.1.1:8080")
+	l, _ := newListener(nil, "*", 5, true, true)
+	conn := newMockBufferConn(bytes.NewBufferString(""), addr)
+	wconn, err := l.createProxyProtocolConn(conn)
+	if err != nil {
+		t.Errorf("Got Error: %v", err)
+	} else {
+		buf := make([]byte, 4096)
+		_, err = wconn.Read(buf)
+		if err == nil {
+			t.Fatalf("Should got error")
+		} else {
+			if err == ErrHeaderReadTimeout {
+				t.Fatalf("Should not return header read timeout error")
+			}
+			if err != io.EOF {
+				t.Fatalf("Expect EOF error but got: %v", err)
+			}
 		}
 	}
 }
