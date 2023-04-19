@@ -231,6 +231,8 @@ func (c *proxyProtocolConn) readClientAddrBehindProxy(connRemoteAddr net.Addr) e
 func (c *proxyProtocolConn) parseHeader(connRemoteAddr net.Addr) error {
 	ver, buffer, err := c.readHeader()
 	if err != nil {
+		// If unknown protocol and fallbackable it should
+		// fill the readed buffer to exceed buffer
 		if ver == unknownProtocol && c.fallbackable {
 			c.exceedBuffer = buffer
 			c.exceedBufferLen = len(buffer)
@@ -348,7 +350,8 @@ func (c *proxyProtocolConn) Read(buffer []byte) (int, error) {
 		err := c.parseHeader(c.clientIP)
 		if err != nil {
 			if c.fallbackable {
-				// If fallbackable we should fill the
+				// If fallbackable it should fill the buffer that
+				// readed by parse header step.
 				maxn := len(buffer)
 				if c.exceedBufferLen < maxn {
 					maxn = c.exceedBufferLen
