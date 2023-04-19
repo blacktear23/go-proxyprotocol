@@ -15,12 +15,22 @@ import (
 type mockBufferConn struct {
 	*bytes.Buffer
 	raddr net.Addr
+	Err   error
 }
 
 func newMockBufferConn(buffer *bytes.Buffer, raddr net.Addr) net.Conn {
 	return &mockBufferConn{
 		Buffer: buffer,
 		raddr:  raddr,
+		Err:    nil,
+	}
+}
+
+func newMockBufferConnWithErr(buffer *bytes.Buffer, raddr net.Addr, err error) net.Conn {
+	return &mockBufferConn{
+		Buffer: buffer,
+		raddr:  raddr,
+		Err:    err,
 	}
 }
 
@@ -29,6 +39,14 @@ func newMockBufferConnBytes(buffer []byte, raddr net.Addr) *mockBufferConn {
 		Buffer: bytes.NewBuffer(buffer),
 		raddr:  raddr,
 	}
+}
+
+func (c *mockBufferConn) Read(buf []byte) (int, error) {
+	n, err := c.Buffer.Read(buf)
+	if err == nil && c.Err != nil {
+		return n, c.Err
+	}
+	return n, err
 }
 
 func (c *mockBufferConn) Close() error {
@@ -621,13 +639,30 @@ func TestProxyProtocolListenerReadTimeoutWithLazyMode(t *testing.T) {
 		_, err = wconn.Read(buf)
 		if err == nil {
 			t.Fatalf("Should got error")
-		} else {
-			if err == ErrHeaderReadTimeout {
-				t.Fatalf("Should not return header read timeout error")
-			}
-			if err != io.EOF {
-				t.Fatalf("Expect EOF error but got: %v", err)
-			}
 		}
+		if err == ErrHeaderReadTimeout {
+			t.Fatalf("Should not return header read timeout error")
+		}
+		if err != io.EOF {
+			t.Fatalf("Expect EOF error but got: %v", err)
+		}
+	}
+}
+
+func TestFallbackWithConnectionReadError(t *testing.T) {
+	addr, _ := net.ResolveTCPAddr("tcp4", "192.168.1.1:8080")
+	l, _ := newListener(nil, "*", 5, true, true)
+	conn := newMockBufferConnWithErr(bytes.NewBufferString("test"), addr, io.EOF)
+	wconn, _ := l.createProxyProtocolConn(conn)
+	buf := make([]byte, 4096)
+	n, err := wconn.Read(buf)
+	if err == nil {
+		t.Fatalf("Should got error")
+	}
+	if err != io.EOF {
+		t.Fatalf("Expect EOF error but got: %v", err)
+	}
+	if n != 4 || string(buf[0:n]) != "test" {
+		t.Fatalf("Buffer expect [test] but not same")
 	}
 }
