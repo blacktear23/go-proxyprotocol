@@ -666,3 +666,186 @@ func TestFallbackWithConnectionReadError(t *testing.T) {
 		t.Fatalf("Buffer expect [test] but not same")
 	}
 }
+
+func TestWriteTo(t *testing.T) {
+	addr := "127.0.0.1:18081"
+	var wg sync.WaitGroup
+	var wgs sync.WaitGroup
+	wg.Add(1)
+	wgs.Add(1)
+	go func() {
+		l, err := net.Listen("tcp", addr)
+		assertNil(t, err)
+		ppl, err := NewListener(l, "*", 1, false)
+		assertNil(t, err)
+		defer ppl.Close()
+		wg.Done()
+		conn, err := ppl.Accept()
+		assertNil(t, err)
+		var readBuf bytes.Buffer
+		if cwt, ok := conn.(io.WriterTo); ok {
+			n, err := cwt.WriteTo(&readBuf)
+			assertNil(t, err)
+			assertEquals(t, readBuf.String(), "This is a test")
+			assertEquals(t, n, 14)
+			assertEquals(t, conn.RemoteAddr().String(), "192.168.1.100:7890")
+		}
+		wgs.Done()
+	}()
+	wg.Wait()
+	conn, err := net.Dial("tcp", addr)
+	assertNil(t, err)
+	hdr := encodeProxyProtocolV2Header("tcp4", "192.168.1.100:7890", "192.168.1.5:4000")
+	_, err = conn.Write(hdr)
+	assertNil(t, err)
+	_, err = conn.Write([]byte("This is a test"))
+	assertNil(t, err)
+	conn.Close()
+	wgs.Wait()
+}
+
+func TestWriteToWithLazyListener(t *testing.T) {
+	addr := "127.0.0.1:18081"
+	var wg sync.WaitGroup
+	var wgs sync.WaitGroup
+	wg.Add(1)
+	wgs.Add(1)
+	go func() {
+		l, err := net.Listen("tcp", addr)
+		assertNil(t, err)
+		ppl, err := NewLazyListener(l, "*", 1, false)
+		assertNil(t, err)
+		defer ppl.Close()
+		wg.Done()
+		conn, err := ppl.Accept()
+		assertNil(t, err)
+		var readBuf bytes.Buffer
+		if cwt, ok := conn.(io.WriterTo); ok {
+			n, err := cwt.WriteTo(&readBuf)
+			assertNil(t, err)
+			assertEquals(t, readBuf.String(), "This is a test")
+			assertEquals(t, n, 14)
+			assertEquals(t, conn.RemoteAddr().String(), "192.168.1.100:7890")
+		}
+		wgs.Done()
+	}()
+	wg.Wait()
+	conn, err := net.Dial("tcp", addr)
+	assertNil(t, err)
+	hdr := encodeProxyProtocolV2Header("tcp4", "192.168.1.100:7890", "192.168.1.5:4000")
+	_, err = conn.Write(hdr)
+	assertNil(t, err)
+	_, err = conn.Write([]byte("This is a test"))
+	assertNil(t, err)
+	conn.Close()
+	wgs.Wait()
+}
+
+func TestReadFrom(t *testing.T) {
+	addr := "127.0.0.1:18081"
+	var wg sync.WaitGroup
+	var wgs sync.WaitGroup
+	wg.Add(1)
+	wgs.Add(1)
+	go func() {
+		l, err := net.Listen("tcp", addr)
+		assertNil(t, err)
+		ppl, err := NewListener(l, "*", 1, false)
+		assertNil(t, err)
+		defer ppl.Close()
+		wg.Done()
+		conn, err := ppl.Accept()
+		assertNil(t, err)
+		if crf, ok := conn.(io.ReaderFrom); ok {
+			writeBuf := bytes.NewBufferString("This is write test")
+			n, err := crf.ReadFrom(writeBuf)
+			assertNil(t, err)
+			assertEquals(t, n, 18)
+		}
+		var readBuf bytes.Buffer
+		if cwt, ok := conn.(io.WriterTo); ok {
+			n, err := cwt.WriteTo(&readBuf)
+			assertNil(t, err)
+			assertEquals(t, readBuf.String(), "This is a test")
+			assertEquals(t, n, 14)
+			assertEquals(t, conn.RemoteAddr().String(), "192.168.1.100:7890")
+		}
+		wgs.Done()
+	}()
+	wg.Wait()
+	conn, err := net.Dial("tcp", addr)
+	assertNil(t, err)
+	hdr := encodeProxyProtocolV2Header("tcp4", "192.168.1.100:7890", "192.168.1.5:4000")
+	_, err = conn.Write(hdr)
+	assertNil(t, err)
+	_, err = conn.Write([]byte("This is a test"))
+	assertNil(t, err)
+	rbuf := make([]byte, 1024)
+	n, err := conn.Read(rbuf)
+	assertNil(t, err)
+	assertTrue(t, n > 0)
+	assertEquals(t, string(rbuf[0:n]), "This is write test")
+	conn.Close()
+	wgs.Wait()
+}
+
+type mockBufferConnNoReadFrom struct {
+	conn net.Conn
+}
+
+func (mb *mockBufferConnNoReadFrom) Read(buf []byte) (int, error) {
+	return mb.conn.Read(buf)
+}
+
+func (mb *mockBufferConnNoReadFrom) Write(buf []byte) (int, error) {
+	return mb.conn.Write(buf)
+}
+
+func (mb *mockBufferConnNoReadFrom) Close() error {
+	return mb.conn.Close()
+}
+
+func (mb *mockBufferConnNoReadFrom) RemoteAddr() net.Addr {
+	return mb.conn.RemoteAddr()
+}
+
+func (mb *mockBufferConnNoReadFrom) LocalAddr() net.Addr {
+	return mb.conn.LocalAddr()
+}
+
+func (mb *mockBufferConnNoReadFrom) SetDeadline(t time.Time) error {
+	return nil
+}
+
+func (c *mockBufferConnNoReadFrom) SetReadDeadline(t time.Time) error {
+	return nil
+}
+
+func (c *mockBufferConnNoReadFrom) SetWriteDeadline(t time.Time) error {
+	return nil
+}
+
+type bufferNoWriteTo struct {
+	b *bytes.Buffer
+}
+
+func (b *bufferNoWriteTo) Read(buf []byte) (int, error) {
+	return b.b.Read(buf)
+}
+
+func (b *bufferNoWriteTo) Write(buf []byte) (int, error) {
+	return b.b.Write(buf)
+}
+
+func TestReadFromWithIOCopy(t *testing.T) {
+	buffer := []byte("PROXY TCP4 192.168.1.100 192.168.1.50 5678 3306\r\nOther Data")
+	cbuf := bytes.NewBuffer(buffer)
+	conn := &mockBufferConnNoReadFrom{newMockBufferConn(cbuf, nil)}
+	l, _ := newListener(nil, "*", 5, false, false)
+	wconn, err := l.createProxyProtocolConn(conn)
+	assertNil(t, err)
+	readBuf := &bufferNoWriteTo{bytes.NewBufferString("This is write buffer")}
+	_, err = wconn.ReadFrom(readBuf)
+	assertNil(t, err)
+	assertEquals(t, cbuf.String(), "This is write buffer")
+}

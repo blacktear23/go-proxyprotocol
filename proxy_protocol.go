@@ -33,8 +33,10 @@ var (
 	proxyProtocolV2Sig              = []byte{0x0D, 0x0A, 0x0D, 0x0A, 0x00, 0x0D, 0x0A, 0x51, 0x55, 0x49, 0x54, 0x0A}
 	proxyProtocolV1Sig              = []byte("PROXY")
 
-	_ net.Conn     = &proxyProtocolConn{}
-	_ net.Listener = &proxyProtocolListener{}
+	_ net.Conn      = &proxyProtocolConn{}
+	_ io.ReaderFrom = &proxyProtocolConn{}
+	_ io.WriterTo   = &proxyProtocolConn{}
+	_ net.Listener  = &proxyProtocolListener{}
 )
 
 type connErr struct {
@@ -450,4 +452,46 @@ func (c *proxyProtocolConn) readHeader() (int, []byte, error) {
 	}
 	// Unknown protocol
 	return unknownProtocol, buf[0:n], nil
+}
+
+type proxyProtocolConnIOWrapper struct {
+	ppc *proxyProtocolConn
+}
+
+func (ppciow *proxyProtocolConnIOWrapper) Read(b []byte) (int, error) {
+	return ppciow.ppc.Read(b)
+}
+
+func (ppciow *proxyProtocolConnIOWrapper) Write(b []byte) (int, error) {
+	return ppciow.ppc.Write(b)
+}
+
+func (c *proxyProtocolConn) ReadFrom(r io.Reader) (int64, error) {
+	if rf, ok := c.Conn.(io.ReaderFrom); ok {
+		return rf.ReadFrom(r)
+	}
+	// Using proxyProtocolConnIOWrapper to prevent stack overflow
+	return io.Copy(&proxyProtocolConnIOWrapper{c}, r)
+}
+
+func (c *proxyProtocolConn) WriteTo(w io.Writer) (int64, error) {
+	if c.lazyMode && !c.headerReaded {
+		// Using proxyProtocolConnIOWrapper to prevent stack overflow
+		return io.Copy(w, &proxyProtocolConnIOWrapper{c})
+	}
+	canUseReadFrom := false
+	if c.exceedBufferReaded {
+		canUseReadFrom = true
+	}
+	if c.exceedBufferLen == 0 || c.exceedBufferStart >= c.exceedBufferLen {
+		c.exceedBufferReaded = true
+		canUseReadFrom = true
+	}
+	if canUseReadFrom {
+		if wt, ok := c.Conn.(io.WriterTo); ok {
+			return wt.WriteTo(w)
+		}
+	}
+	// Using proxyProtocolConnIOWrapper to prevent stack overflow
+	return io.Copy(w, &proxyProtocolConnIOWrapper{c})
 }
