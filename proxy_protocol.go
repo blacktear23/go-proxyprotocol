@@ -36,8 +36,19 @@ var (
 	_ net.Conn      = &proxyProtocolConn{}
 	_ io.ReaderFrom = &proxyProtocolConn{}
 	_ io.WriterTo   = &proxyProtocolConn{}
+	_ UnderlayConn  = &proxyProtocolConn{}
 	_ net.Listener  = &proxyProtocolListener{}
 )
+
+// UnderlayConn is implemented by connections that wrap an underlying net.Conn
+// and can hand it back. Its single method mirrors the exported API of
+// *crypto/tls.Conn (NetConn() net.Conn), so callers can unwrap either kind of
+// connection through one shared interface, for example to reach syscall.Conn
+// and inspect the underlying file descriptor.
+type UnderlayConn interface {
+	// NetConn returns the underlying net.Conn that this connection wraps.
+	NetConn() net.Conn
+}
 
 type connErr struct {
 	conn net.Conn
@@ -224,6 +235,11 @@ type proxyProtocolConn struct {
 	lazyMode           bool
 	headerReaded       bool
 	fallbackable       bool
+}
+
+// NetConn implements UnderlayConn.
+func (c *proxyProtocolConn) NetConn() net.Conn {
+	return c.Conn
 }
 
 func (c *proxyProtocolConn) readClientAddrBehindProxy(connRemoteAddr net.Addr) error {
