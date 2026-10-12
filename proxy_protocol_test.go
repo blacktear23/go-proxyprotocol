@@ -8,6 +8,7 @@ import (
 	"net"
 	"reflect"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -848,4 +849,88 @@ func TestReadFromWithIOCopy(t *testing.T) {
 	_, err = wconn.ReadFrom(readBuf)
 	assertNil(t, err)
 	assertEquals(t, cbuf.String(), "This is write buffer")
+}
+
+// recordingListener wraps a net.Listener and records every raw connection it
+// hands back so a test can compare it against the wrapped PROXY protocol
+// connection.
+type recordingListener struct {
+	net.Listener
+	accepted chan net.Conn
+}
+
+func (rl *recordingListener) Accept() (net.Conn, error) {
+	conn, err := rl.Listener.Accept()
+	if err != nil {
+		return nil, err
+	}
+	rl.accepted <- conn
+	return conn, nil
+}
+
+func TestProxyProtocolConnNetConn(t *testing.T) {
+	addr := "127.0.0.1:18082"
+	l, err := net.Listen("tcp", addr)
+	assertNil(t, err)
+	defer l.Close()
+
+	rl := &recordingListener{Listener: l, accepted: make(chan net.Conn, 1)}
+	ppl, err := NewLazyListener(rl, "*", 1, false)
+	assertNil(t, err)
+	defer ppl.Close()
+
+	client, err := net.Dial("tcp", addr)
+	assertNil(t, err)
+	defer client.Close()
+
+	conn, err := ppl.Accept()
+	assertNil(t, err)
+
+	// The lazy listener must hand back a connection that can be unwrapped
+	// through the exported UnderlayConn interface (same shape as *tls.Conn).
+	netConner, ok := conn.(UnderlayConn)
+	if !ok {
+		t.Fatalf("accepted conn does not implement UnderlayConn: %T", conn)
+	}
+
+	// NetConn() must be the original underlying conn (same object).
+	rawConn := <-rl.accepted
+	if got := netConner.NetConn(); got != rawConn {
+		t.Errorf("NetConn() returned %v, want original conn %v", got, rawConn)
+	}
+
+	// Write a PROXY protocol v1 header plus application data so the first
+	// Read below consumes and strips the header.
+	const appData = "Hello NetConn"
+	_, err = client.Write([]byte("PROXY TCP4 192.168.1.100 192.168.1.50 5678 3306\r\n" + appData))
+	assertNil(t, err)
+
+	// NetConn() must be stable before and after the first Read that consumes
+	// the PROXY protocol header.
+	beforeRead := netConner.NetConn()
+	if beforeRead != rawConn {
+		t.Errorf("NetConn() before read returned %v, want %v", beforeRead, rawConn)
+	}
+
+	buf := make([]byte, len(appData))
+	n, err := conn.Read(buf)
+	assertNil(t, err)
+	assertEquals(t, string(buf[0:n]), appData)
+
+	afterRead := netConner.NetConn()
+	if afterRead != rawConn {
+		t.Errorf("NetConn() after read returned %v, want %v", afterRead, rawConn)
+	}
+
+	// If the wrapped conn exposes syscall.Conn (e.g. *net.TCPConn) the accessor
+	// must let callers reach the RawConn for a non-consuming liveness check.
+	if sc, ok := netConner.NetConn().(syscall.Conn); ok {
+		raw, err := sc.SyscallConn()
+		assertNil(t, err)
+		if raw == nil {
+			t.Errorf("SyscallConn() returned nil RawConn")
+		}
+	} else {
+		t.Logf("underlying conn %T does not implement syscall.Conn; skipping SyscallConn check", rawConn)
+	}
 }
