@@ -75,3 +75,26 @@ ppl, err := proxyprotocol.NewLazyListener(l, "*", 5, true)
 
 ...
 ```
+
+## Get Underlay Raw Connection
+
+`go-proxyprotocol` provide a `UnderlayConn` interface that can let user get the raw connection.
+
+```go
+// Create listener
+l, err := net.Listener("tcp", "...")
+
+// Wrap listener as PROXY protocol listener and enable lazy mode.
+ppl, err := proxyprotocol.NewLazyListener(l, "*", 5, false)
+
+// Accept the connection
+conn, err := ppl.Accept()
+
+// Get the underlay raw connection
+var rawConn net.Conn = nil
+if netConn, ok := conn.(UnderlayConn); ok {
+    rawConn := netConn.NetConn()
+}
+
+...
+```
